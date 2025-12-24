@@ -1,6 +1,8 @@
 // src/modules/users/users.controller.js
+const bcrypt = require('bcrypt');
 const { pool } = require('../../config/db');
 
+const SALT_ROUNDS = 10;
 /**
  * GET /api/users
  * Lista solo usuarios activos (is_active = true)
@@ -56,30 +58,34 @@ async function getUser(req, res) {
  * Crea un usuario
  */
 async function createUserHandler(req, res) {
-  const { full_name, email, password, role } = req.body;
-
-  if (!full_name || !email) {
-    return res
-      .status(400)
-      .json({ message: 'full_name y email son obligatorios' });
-  }
-
-  const finalRole = role || 'owner';
-
   try {
-    const { rows } = await pool.query(
+    const { full_name, email, password, role } = req.body;
+
+    if (!full_name || !email || !password) {
+      return res
+        .status(400)
+        .json({ message: 'full_name, email y password son obligatorios' });
+    }
+
+    // 1) Hasheamos la contraseña
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    // 2) Guardamos en la BD el hash, NO el password en texto plano
+    const result = await pool.query(
       `
-      INSERT INTO users (full_name, email, password, role)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO users (full_name, email, role, is_active, password_hash, created_at, updated_at)
+      VALUES ($1, $2, COALESCE($3, 'owner'), true, $4, NOW(), NOW())
       RETURNING id, full_name, email, role, is_active, created_at, updated_at
       `,
-      [full_name, email, password || null, finalRole]
+      [full_name, email, role, passwordHash]
     );
 
-    return res.status(201).json(rows[0]);
+    const user = result.rows[0];
+
+    res.status(201).json(user);
   } catch (err) {
     console.error('Error creando usuario:', err.message);
-    return res.status(500).json({ message: 'Error creando usuario' });
+    res.status(500).json({ message: 'Error creando usuario' });
   }
 }
 
